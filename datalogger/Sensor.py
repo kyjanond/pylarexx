@@ -1,3 +1,6 @@
+#!/usr/bin/python
+# -*- coding: utf-8 -*-
+
 '''
 Created on 23.11.2017
 
@@ -64,7 +67,7 @@ class ArexxSensor(Sensor):
         super().__init__(id)
         # reading device.xml disabled at the moment. Have to ask arexx, if i may include it in this software
         # if len(ArexxSensor.arexxDeviceInfo) == 0:
-        #     self.readDeviceXML()
+        self.readDeviceXML()
 
             
                 
@@ -102,9 +105,7 @@ class ArexxSensor(Sensor):
                     p[n]=float(param.text)
                     n+=1
                 ArexxSensor.arexxDeviceInfo['devicetypes'].append({'type': dtype, 'm1': m1, 'm2': m2, 'dm': dm, 'vLo': vLo, 'vUp': vUp, 'i': i, 'p': p})
-            
-                
-            print(ArexxSensor.arexxDeviceInfo)     
+                 
         except Exception as e:
             logging.error("Problem reading device.xml: %s",e)
             exc_type, exc_obj, exc_tb = sys.exc_info()
@@ -122,7 +123,7 @@ class ArexxTemperatureSensor(ArexxSensor):
     def rawToCooked(self,raw):
         c0=self.calibrationValues.get(0,0.0)
         c1=self.calibrationValues.get(1,0.0)
-        if self.manufacturerType=='TSN-TH70E':
+        if self.manufacturerType=='TSN-TH70E' or self.manufacturerType=='IP-TH78ext':
             return -39.6 +c0 + raw*(0.01+c1)
         if self.manufacturerType=='TL-3TSN':
             return c0+raw*(0.0078125+c1)

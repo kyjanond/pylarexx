@@ -14,6 +14,7 @@ import logging
 import socketserver
 import socket
 import threading
+import time
 
 class DataListener(object):
 
@@ -28,10 +29,18 @@ class LoggingListener(DataListener):
     '''
     Listener that uses logging to print data. For debugging purposes
     '''     
-    
+   
     def onNewData(self,data):
-        logging.info("Datapoint: sensorid %s, raw data: %d cooked: %f %s timestamp: %d from sensor %s type %s" % (data['sensorid'],data['rawvalue'],data['sensor'].rawToCooked(data['rawvalue']),data['sensor'].unit,data['timestamp'],data['sensor'].name,data['sensor'].type))
-        
+        try:
+            logging.info("{2}: sensorid {0[sensorid]}, raw data: {0[rawvalue]} cooked: {1:.2f} {0[sensor].unit} timestamp: {0[timestamp]} from sensor {0[sensor].name} type {0[sensor].type}".format(
+                data,
+                data['sensor'].rawToCooked(data['rawvalue']),
+                time.strftime('%y.%m.%d %H:%M:%S',time.gmtime(data['timestamp']))
+                ))
+        except Exception as e:
+            logging.error("Format error: {}".format(e))
+            logging.debug(data)
+
 class FileOutListener(DataListener):
     '''
     Listener that saves Data to a file
@@ -41,7 +50,13 @@ class FileOutListener(DataListener):
         self.filename = self.params.get('filename','/tmp/pylarexx.out')
         self.status='not initialized'
         self.openLogfile()
-            
+    
+    def cleanup(self):
+        if self.fd:
+            self.fd.close()
+            self.fd = None
+            self.status='not initialized'
+
     def openLogfile(self):
         try:
             # TODO: close file
@@ -50,18 +65,21 @@ class FileOutListener(DataListener):
         except Exception as e:
             self.status='error'
             logging.error("FileOutListener: Unable to open file %s. Error message: %s" % (self.filename,e))
-
     
     def onNewData(self,data):
-        if self.status != 'ready':
-            self.openLogfile()
+        try:
+            if self.status != 'ready':
+                self.openLogfile()
             
-        if self.status == 'ready':
-            if data['signal'] == None:
-                signaltext="-"
-            else:
-                signaltext = str(data['signal'])
-            self.fd.write('%d,%d,%f %s,%d,%s,%s,%s\n' % (data['sensorid'],data['rawvalue'],data['sensor'].rawToCooked(data['rawvalue']),data['sensor'].unit,data['timestamp'],signaltext,data['sensor'].name,data['sensor'].type))
+            if self.status == 'ready':
+                if data['signal'] == None:
+                    signaltext="-"
+                else:
+                    signaltext = str(data['signal'])
+                self.fd.write('%d,%d,%f %s,%d,%s,%s,%s\n' % (data['sensorid'],data['rawvalue'],data['sensor'].rawToCooked(data['rawvalue']),data['sensor'].unit,data['timestamp'],signaltext,data['sensor'].name,data['sensor'].type))
+        except Exception as e:
+            self.cleanup()
+            logging.ERROR("onNewData error: {}".format(e))
 
 class RecentValuesListener(DataListener):
     '''

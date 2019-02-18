@@ -15,14 +15,27 @@ import datalogger.DataListener
 from datalogger.DataListener import DataListener
 import logging
 import yaml
+import struct
+import binascii
 
+FORMAT = '%(asctime)-15s %(clientip)s %(user)-8s %(message)s'
+logging.basicConfig(filename='logger.log',level=logging.DEBUG)
 
+# define a Handler which writes INFO messages or higher to the sys.stderr
+console = logging.StreamHandler()
+console.setLevel(logging.INFO)
+# set a format which is simpler for console use
+formatter = logging.Formatter('%(name)-12s: %(levelname)-8s %(message)s')
+# tell the handler to use this format
+console.setFormatter(formatter)
+# add the handler to the root logger
+logging.getLogger('').addHandler(console)
 
 class TLX00(object):
     '''
     This class handles USB connection and communication for Arexx TL-300 and TL-500 devices
     '''
-    TIME_OFFSET = 946681200           # Timestamp of 2000-01-01 00:00:00
+    TIME_OFFSET = 946684800           # Timestamp of 2000-01-01 00:00:00
 
     def __init__(self, params):   
         self.devices=[]
@@ -49,13 +62,14 @@ class TLX00(object):
                     logging.info("Adding Sensor from config file: %d %s %s"%(sensorid,sensortype,name))
                     if sensortype in ('TL-3TSN','TSN-50E','TSN-EXT44','TSN-33MN'):
                         self.sensors[sensorid]=datalogger.Sensor.ArexxTemperatureSensor(sensorid,sensortype,name)
-                    elif sensortype in ('TSN-TH70E', 'TSN-TH77ext'):
+                    elif sensortype in ('TSN-TH70E', 'TSN-TH77ext','IP-TH78ext'):
                         self.sensors[sensorid]=datalogger.Sensor.ArexxTemperatureSensor(sensorid,sensortype,name)
                         self.sensors[sensorid+1]=datalogger.Sensor.ArexxHumiditySensor(sensorid+1,sensortype,name)
                     else:
                         self.addSensor(sensorid, name, sensortype)
             except Exception as e:
                 logging.error('Error in config section sensors: %s',e)
+            print(self.sensors)
 
         if 'calibration' in self.config:
             for c in self.config['calibration']:
@@ -100,7 +114,7 @@ class TLX00(object):
                
     def findDevices(self):
         
-        self.devices = usb.core.find(find_all= True, idVendor=0x0451, idProduct=0x3211)
+        self.devices = list(usb.core.find(find_all= True, idVendor=0x0451, idProduct=0x3211))
         if len(self.devices) > 0:
             logging.info("Found %d TL300/500 device(s) at" % len(self.devices))
             for d in self.devices:
@@ -127,15 +141,20 @@ class TLX00(object):
         self.clearRequestBuffer()
         self.requestBuffer[0]=4
         # put time in array
-        t=math.floor(time.time())-self.TIME_OFFSET
-        tb=t.to_bytes(4,byteorder='little')
+        #t = 0
+        t=int(math.floor(time.time()))-self.TIME_OFFSET
+        #tb=t.to_bytes(4,byteorder='little')
+        tb = array.array('B',struct.pack('L',t))
+        logging.info("Time set to: {}".format(time.strftime("%a, %d %b %Y %H:%M:%S +0000", time.gmtime(t+self.TIME_OFFSET))))
         
         for i in range(0,4):
             self.requestBuffer[i+1]=tb[i]
         # send data
         try:
-            device.write(0x1,self.requestBuffer,0,1000)
-            device.read(0x81,64,0,1000)
+            logging.debug(device)
+            #print(0x1,self.requestBuffer,0,1000)
+            device.write(0x2,self.requestBuffer,1000)
+            device.read(0x82,64,1000)
             device.lastTimeSync=int(time.time())
         except Exception as e:
             logging.error("Error setting time: %s",e)
@@ -168,20 +187,30 @@ class TLX00(object):
                 break;
                 # pos += 25
                 # continue
-            if (data[pos] == 9 or data[pos] == 10) and pos < 55:
+            if (data[pos] == 9 or data[pos] == 10 or data[pos] == 11) and pos < 55:
                 # logging.debug("Parser found start mark")
-                sensorid = int.from_bytes([data[pos+1],data[pos+2]], byteorder = 'little', signed=False)
-                rawvalue = int.from_bytes([data[pos+3],data[pos+4]], byteorder = 'big', signed=False)
-                timestamp = int.from_bytes([data[pos+5],data[pos+6],data[pos+7],data[pos+8]], byteorder = 'little', signed=False)
+                #print('---')
+                #print(pos,data)
+                #print(binascii.hexlify(data))
+                sensorid_data = data[pos+1:pos+4]
+                sensorid_data.append(0)
+                #print(sensorid_data)
+                sensorid = struct.unpack('L',sensorid_data)[0]
+            
+                #sensorid = int.from_bytes([data[pos+1],data[pos+2]], byteorder = 'little', signed=False)
+                rawvalue = int.from_bytes([data[pos+5],data[pos+6]], byteorder = 'big', signed=False)
+                timestamp = int.from_bytes([data[pos+7],data[pos+8],data[pos+9],data[pos+10]], byteorder = 'little', signed=False)
                 signal=None
                 if data[pos] == 10:
-                    signal = int.from_bytes([data[pos+9]],byteorder = 'little', signed=False)
+                    signal = int.from_bytes([data[pos+10]],byteorder = 'little', signed=False)
                 if self.detectUnknownSensors and sensorid not in self.sensors:
+                    print("unknown: ",sensorid)
+                    print(data)
                     self.addSensor(sensorid)
                     
                 datapoints.append({'sensorid': sensorid, 'rawvalue': rawvalue, 'timestamp': timestamp+self.TIME_OFFSET, 'signal':signal, 'sensor': self.sensors[sensorid]})
                 # logging.info("Found Datapoint from sensor %d with value %d" % (sensorid,rawvalue))
-                pos+=8
+                pos+=9
                 continue
             # logging.debug("Parser: Nothing found at pos %d"%pos)
         return datapoints
@@ -206,20 +235,24 @@ class TLX00(object):
                     try:
                         logging.debug("write and read data from device")
 
-                        dev.write(0x1, self.requestBuffer,0,1000)
+                        dev.write(0x2, self.requestBuffer,1000)
                         time.sleep(0.01)
-                        rawdata=dev.read(0x81,64,0,1000)
+                        rawdata=dev.read(0x82,64,1000)
+                        #print(rawdata)
                         if rawdata[0]==0 and rawdata[1]==0:
-                            # no new data
+                            logging.info("no new data")
                             break
                         dev.lastTimeDataRead = int(time.time())
                         datapoints = self.parseData(rawdata)
+                        if datapoints:
+                            pass
                         # notify listeners
                         for datapoint in datapoints:
                             for l in self.listeners:
                                 l.onNewData(datapoint)
                         dev.deviceErrors = 0
                     except Exception as e:
+                        raise e
                         logging.info("Unable to read new data: %s" % e)
                         dev.deviceErrors += 1
                         if dev.deviceErrors > 10 :
@@ -228,7 +261,7 @@ class TLX00(object):
                         break
             # do not busy poll. Sleep one second
             logging.debug("sleeping")
-            time.sleep(4)        
+            time.sleep(10)        
                 
                 
             
