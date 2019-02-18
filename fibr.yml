@@ -1,0 +1,33 @@
+sensors:
+    - id: 262310
+      name: B
+      type: IP-TH78ext
+    - id: 263586
+      name: A
+      type: IP-TH78ext
+    - id: 263648
+      name: C
+      type: IP-TH78ext
+calibration:
+    - id: 17208
+      values:
+          0: 1.56
+    - id: 17209
+      values: 
+          0: -8.43
+          1: 0.0
+output:
+    - type: LoggingListener
+    - type: FileOutListener
+      params:
+          filename: /home/pi/tmp/arexx.out
+    - type: RecentValuesListener
+      params:
+          host: 0.0.0.0
+          port: 3333
+config:
+    DetectUnknownSensors: yes
+
+   
+
+
